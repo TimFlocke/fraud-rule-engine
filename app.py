@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -358,10 +361,12 @@ elif page == "Suggest a Rule":
         "and we'll evaluate it on the ACH dataset."
     )
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         api_key = st.text_input("Anthropic API key", type="password",
-                                help="Set ANTHROPIC_API_KEY env var or enter here.")
+                                help="Add ANTHROPIC_API_KEY to .env file or enter here.")
+    if not api_key:
+        st.error("API key not found. Add ANTHROPIC_API_KEY to .env file.")
 
     user_text = st.text_area(
         "Describe the fraud pattern",
