@@ -79,5 +79,5 @@ fraud-rule-engine/
 - **Three-action system** mirrors real production fraud stacks: hard blocks are expensive (false positives lose customers), so a Refer/friction tier (step-up auth, manual review) captures ambiguous cases without burning good users.
 - **Escalation rate** is the metric ops teams actually care about — it determines staffing and queue capacity. The threshold slider lets you simulate operational impact before deploying rules.
 - **EMAIL_RISK_SCORE = 500 spike** — called this out as a data quality issue. In practice, you'd work with the vendor to understand the bucketing or impute differently. Demonstrates awareness that feature engineering and data quality matter more than model complexity.
-- **Claude API integration** shows how LLMs can accelerate the rule ideation loop — analysts describe patterns in English instead of writing code, lowering the barrier to rapid experimentation.
+- **Claude API integration** leverages LLM to accelerate the rule ideation loop — analysts describe patterns in English instead of writing code, lowering the barrier to rapid experimentation.
 - **`class_weight='balanced'`** on the tree handles the class imbalance inherent in fraud data without needing SMOTE or other resampling — simpler and more robust for rule extraction.
