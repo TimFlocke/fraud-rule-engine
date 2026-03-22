@@ -73,7 +73,7 @@ fraud-rule-engine/
     └── fraud_data.csv  # You provide this
 ```
 
-## Interview Talking Points
+## Details
 
 - **Why decision trees?** They produce interpretable rules that risk analysts and compliance teams can review and approve — critical in financial services where model explainability is a regulatory requirement.
 - **Three-action system** mirrors real production fraud stacks: hard blocks are expensive (false positives lose customers), so a Refer/friction tier (step-up auth, manual review) captures ambiguous cases without burning good users.
