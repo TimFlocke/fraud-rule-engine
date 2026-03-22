@@ -73,7 +73,7 @@ fraud-rule-engine/
     └── fraud_data.csv  # You provide this
 ```
 
-## Interview Talking Points
+## Details
 
 - **Why decision trees?** They produce interpretable rules that risk analysts and compliance teams can review and approve — critical in financial services where model explainability is a regulatory requirement.
 - **Three-action system** mirrors real production fraud stacks: hard blocks are expensive (false positives lose customers), so a Refer/friction tier (step-up auth, manual review) captures ambiguous cases without burning good users.
@@ -81,3 +81,31 @@ fraud-rule-engine/
 - **EMAIL_RISK_SCORE = 500 spike** — called this out as a data quality issue. In practice, you'd work with the vendor to understand the bucketing or impute differently. Demonstrates awareness that feature engineering and data quality matter more than model complexity.
 - **Claude API integration** shows how LLMs can accelerate the rule ideation loop — analysts describe patterns in English instead of writing code, lowering the barrier to rapid experimentation.
 - **`class_weight='balanced'`** on the tree handles the class imbalance inherent in fraud data without needing SMOTE or other resampling — simpler and more robust for rule extraction.
+
+---
+
+## Future Improvements (V2)
+
+This fraud rule engine is designed to be extended. Planned enhancements include:
+
+### 1. Dollar Impact Analysis
+- Display total dollar amount of fraud caught by each rule (not just count)
+- Show cost-benefit analysis: "This rule catches $45,000 in fraud while escalating $2,000 in legitimate transfers"
+- Help stakeholders understand financial impact of rule selection
+
+### 2. Rule Orthogonality Detection
+- Measure overlap between rules to identify redundancy
+- Calculate Jaccard similarity: Rules catching identical fraud cases are marked as overlapping
+- Recommend complementary rules: "Rule_1 and Rule_3 are orthogonal (0% overlap) - good combination"
+- Warn users: "Your selected rules have 65% overlap - consider choosing more complementary rules for better coverage"
+
+### 3. Export Strategy as Python Code
+- Generate copy-paste Python code that applies the selected strategy to new data
+- Output includes rule definitions, thresholds, and action assignment logic
+- Enable non-technical users to deploy strategy: "Copy this code into your production pipeline"
+
+### 4. Dynamic Dataset Upload
+- Allow users to upload their own CSV or connect to a data source
+- Auto-detect fraud label column and feature types
+- Regenerate rules on new datasets in real-time
+- Enable the tool to work across different payment methods, institutions, or time periods
