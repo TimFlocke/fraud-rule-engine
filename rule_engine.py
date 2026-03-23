@@ -166,115 +166,179 @@ def _path_to_lambda_str(tree, feature_names, path_nodes):
     return "lambda row: " + " & ".join(parts)
 
 
+_OP_PATTERN = re.compile(
+    r'^\s*(?P<feat>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<op>>=|<=|!=|==|>|<)\s*(?P<val>.+?)\s*$'
+)
+
+
+def _parse_condition(condition: str) -> tuple[str, str, str] | None:
+    """Extract (feature, operator, value) from a condition string.
+
+    Returns None if the condition can't be parsed.
+    """
+    m = _OP_PATTERN.match(condition)
+    if m:
+        return m.group("feat"), m.group("op"), m.group("val")
+    return None
+
+
+def _is_true_check(op: str, val: str) -> bool:
+    """Return True if the operator/value pair represents a truthy check."""
+    val_lower = val.strip().lower()
+    return val_lower in ("true", "1") and op in ("==", ">=", ">")
+
+
+def _is_false_check(op: str, val: str) -> bool:
+    """Return True if the operator/value pair represents a falsy check."""
+    val_lower = val.strip().lower()
+    return (val_lower in ("false", "0") and op in ("==", "<=", "<")) or \
+           (val_lower in ("true", "1") and op in ("!=",))
+
+
 def _condition_narrative(condition: str) -> str:
     """Turn a single rule condition into a human-readable phrase."""
-    condition = condition.strip()
+    try:
+        condition = condition.strip()
 
-    # One-hot encoded categorical features
-    for cat in CATEGORICAL_FEATURES:
-        prefix = cat + "_"
-        if prefix in condition:
-            readable = _onehot_readable(condition.split(" ==")[0].strip())
-            if "True" in condition or "== 1" in condition:
-                return readable
-            else:
-                return f"not {readable}"
+        # One-hot encoded categorical features
+        for cat in CATEGORICAL_FEATURES:
+            prefix = cat + "_"
+            if prefix in condition:
+                parsed = _parse_condition(condition)
+                feat_name = parsed[0] if parsed else condition.split()[0]
+                readable = _onehot_readable(feat_name)
+                if parsed and _is_true_check(parsed[1], parsed[2]):
+                    return readable
+                elif parsed and _is_false_check(parsed[1], parsed[2]):
+                    return f"not {readable}"
+                elif "True" in condition or "1" in condition:
+                    return readable
+                else:
+                    return f"not {readable}"
 
-    # EMAIL_RISK_SCORE
-    if "EMAIL_RISK_SCORE" in condition:
-        if ">" in condition:
-            val = condition.split(">")[1].strip()
-            return f"high email address risk score (vendor score > {val})"
-        else:
-            val = condition.split("<=")[1].strip()
-            return f"low-to-moderate email address risk score (vendor score <= {val})"
+        parsed = _parse_condition(condition)
 
-    # TRANSFER_AMOUNT_USD
-    if "TRANSFER_AMOUNT_USD" in condition:
-        if ">" in condition:
-            val = condition.split(">")[1].strip()
-            return f"high transfer amount (> ${float(val):,.0f})"
-        else:
-            val = condition.split("<=")[1].strip()
-            return f"lower transfer amount (<= ${float(val):,.0f})"
-
-    # ACCOUNT_AGE_AT_PURCHASE_DAYS
-    if "ACCOUNT_AGE_AT_PURCHASE_DAYS" in condition:
-        if ">" in condition:
-            val = condition.split(">")[1].strip()
-            return f"established account (> {float(val):.0f} days old)"
-        else:
-            val = condition.split("<=")[1].strip()
-            return f"new account (<= {float(val):.0f} days old)"
-
-    # INTERNATIONAL_PH
-    if "INTERNATIONAL_PH" in condition:
-        if "True" in condition or "== 1" in condition:
-            return "international phone number"
-        else:
+        # INTERNATIONAL_PH — binary feature, check before numeric parsing
+        if "INTERNATIONAL_PH" in condition:
+            if parsed and (_is_true_check(parsed[1], parsed[2])):
+                return "international phone number"
+            elif parsed and (_is_false_check(parsed[1], parsed[2])):
+                return "domestic phone number"
+            elif "True" in condition:
+                return "international phone number"
             return "domestic phone number"
 
-    # rapid_velocity
-    if "rapid_velocity" in condition:
-        if "True" in condition or "== 1" in condition:
-            return "rapid successive transactions (< 5 min apart)"
-        else:
+        # rapid_velocity — binary feature
+        if "rapid_velocity" in condition:
+            if parsed and (_is_true_check(parsed[1], parsed[2])):
+                return "rapid successive transactions (< 5 min apart)"
+            elif parsed and (_is_false_check(parsed[1], parsed[2])):
+                return "normal transaction spacing"
+            elif "True" in condition:
+                return "rapid successive transactions (< 5 min apart)"
             return "normal transaction spacing"
 
-    # prior_transfers
-    if "prior_transfers" in condition:
-        if ">" in condition:
-            val = condition.split(">")[1].strip()
-            return f"some transaction history (> {float(val):.0f} prior transfers)"
-        else:
-            val = condition.split("<=")[1].strip()
-            return f"very few prior transactions (<= {float(val):.0f})"
+        # For numeric features, extract operator and value via regex
+        if parsed:
+            feat, op, val = parsed
+            try:
+                num_val = float(val)
+            except ValueError:
+                num_val = None
 
-    # prior_unique_phone_cntry
-    if "prior_unique_phone_cntry" in condition:
-        if ">" in condition:
-            val = condition.split(">")[1].strip()
-            return f"multi-country phone activity (> {float(val):.0f} countries)"
-        else:
-            val = condition.split("<=")[1].strip()
-            return f"limited phone country diversity (<= {float(val):.0f} countries)"
+            is_high = op in (">", ">=")
 
-    return condition
+            if "EMAIL_RISK_SCORE" in feat:
+                if is_high:
+                    return f"high email address risk score (vendor score {op} {val})"
+                return f"low-to-moderate email address risk score (vendor score {op} {val})"
+
+            if "TRANSFER_AMOUNT_USD" in feat:
+                display = f"${num_val:,.0f}" if num_val is not None else val
+                if is_high:
+                    return f"high transfer amount ({op} {display})"
+                return f"lower transfer amount ({op} {display})"
+
+            if "ACCOUNT_AGE_AT_PURCHASE_DAYS" in feat:
+                display = f"{num_val:.0f}" if num_val is not None else val
+                if is_high:
+                    return f"established account ({op} {display} days old)"
+                return f"new account ({op} {display} days old)"
+
+            if "prior_transfers" in feat:
+                display = f"{num_val:.0f}" if num_val is not None else val
+                if is_high:
+                    return f"some transaction history ({op} {display} prior transfers)"
+                return f"very few prior transactions ({op} {display})"
+
+            if "prior_unique_phone_cntry" in feat:
+                display = f"{num_val:.0f}" if num_val is not None else val
+                if is_high:
+                    return f"multi-country phone activity ({op} {display} countries)"
+                return f"limited phone country diversity ({op} {display} countries)"
+
+            # Generic numeric condition for unknown features
+            display = f"{num_val:.2f}" if num_val is not None else val
+            readable_feat = feat.replace("_", " ").lower()
+            return f"{readable_feat} {op} {display}"
+
+        # Fallback: return the raw condition
+        return condition
+
+    except Exception:
+        return condition
 
 
 def _generate_narrative(rule_str: str, metrics: dict) -> str:
     """Create a 2-3 sentence narrative explaining the fraud pattern."""
-    parts = [c.strip() for c in rule_str.split(" AND ")]
-    descriptions = [_condition_narrative(p) for p in parts]
+    try:
+        # Split on AND / OR, handling both upper and mixed case
+        parts = re.split(r'\s+AND\s+|\s+OR\s+', rule_str, flags=re.IGNORECASE)
+        parts = [p.strip() for p in parts if p.strip()]
 
-    pattern = ", ".join(descriptions[:3])
-    if len(descriptions) > 3:
-        pattern += f", and {len(descriptions) - 3} more signal(s)"
+        if not parts:
+            return "Custom fraud detection rule based on user suggestion."
 
-    prec = metrics["precision"]
-    esc = metrics["escalation_rate"]
+        descriptions = []
+        for p in parts:
+            desc = _condition_narrative(p)
+            if desc:
+                descriptions.append(desc)
 
-    sentence1 = f"This rule targets transactions with {pattern}."
+        if not descriptions:
+            return "Custom fraud detection rule based on user suggestion."
 
-    if prec >= 0.5:
-        sentence2 = f"With {prec:.0%} precision, it reliably identifies fraud when triggered."
-    elif prec >= 0.2:
-        sentence2 = f"At {prec:.0%} precision, it balances detection against false positives."
-    else:
-        sentence2 = (
-            f"Precision is {prec:.0%}, so expect some false positives "
-            f"— best used as a friction gate (Refer) rather than a hard block."
-        )
+        pattern = ", ".join(descriptions[:3])
+        if len(descriptions) > 3:
+            pattern += f", and {len(descriptions) - 3} more signal(s)"
 
-    if esc > 0.15:
-        sentence3 = (
-            f"Escalation rate of {esc:.1%} is elevated; "
-            f"consider pairing with other signals to reduce customer friction."
-        )
-    else:
-        sentence3 = f"Low escalation rate ({esc:.1%}) means minimal impact on legitimate users."
+        prec = metrics.get("precision", 0)
+        esc = metrics.get("escalation_rate", 0)
 
-    return f"{sentence1} {sentence2} {sentence3}"
+        sentence1 = f"This rule targets transactions with {pattern}."
+
+        if prec >= 0.5:
+            sentence2 = f"With {prec:.0%} precision, it reliably identifies fraud when triggered."
+        elif prec >= 0.2:
+            sentence2 = f"At {prec:.0%} precision, it balances detection against false positives."
+        else:
+            sentence2 = (
+                f"Precision is {prec:.0%}, so expect some false positives "
+                f"— best used as a friction gate (Refer) rather than a hard block."
+            )
+
+        if esc > 0.15:
+            sentence3 = (
+                f"Escalation rate of {esc:.1%} is elevated; "
+                f"consider pairing with other signals to reduce customer friction."
+            )
+        else:
+            sentence3 = f"Low escalation rate ({esc:.1%}) means minimal impact on legitimate users."
+
+        return f"{sentence1} {sentence2} {sentence3}"
+
+    except Exception:
+        return "Custom fraud detection rule based on user suggestion."
 
 
 def _prepare_features(
@@ -384,6 +448,19 @@ def extract_rules(
         r["name"] = f"Rule_{i + 1}"
 
     return rules
+
+
+# ── Suggested rule helpers ────────────────────────────────────────────────────
+
+def add_suggested_rule(rule_dict: dict, suggested_rules: list[dict]) -> list[dict]:
+    """Append a suggested rule to the suggested rules list.
+
+    The rule_dict should have the same structure as auto-generated rules:
+    name, rule_str, lambda_str, narrative, precision, recall,
+    escalation_rate, fraud_caught, and _flagged.
+    """
+    suggested_rules.append(rule_dict)
+    return suggested_rules
 
 
 # ── Strategy evaluation ──────────────────────────────────────────────────────

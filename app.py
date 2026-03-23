@@ -10,7 +10,7 @@ import plotly.express as px
 
 from rule_engine import (
     load_ach_data, extract_rules, evaluate_strategy, FEATURES, TARGET,
-    suggest_rule_via_claude, evaluate_suggested_rule,
+    suggest_rule_via_claude, evaluate_suggested_rule, add_suggested_rule,
     FEATURE_DICTIONARY, FEATURE_QUALITY_WARNINGS,
     ALL_SELECTABLE_FEATURES,
 )
@@ -68,6 +68,10 @@ if "min_samples_split" not in st.session_state:
     st.session_state["min_samples_split"] = 10
 if "selected_features" not in st.session_state:
     st.session_state["selected_features"] = list(ALL_SELECTABLE_FEATURES)
+if "suggested_rules" not in st.session_state:
+    st.session_state["suggested_rules"] = []
+if "last_suggested_result" not in st.session_state:
+    st.session_state["last_suggested_result"] = None
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 st.sidebar.title("ACH Fraud Rule Engine")
@@ -254,14 +258,23 @@ elif page == "Strategy Builder":
 
     # ── Rule selection — full text ───────────────────────────────────────────
     st.subheader("Select Rules")
-    selected_indices = []
+    selected_rules = []
     cols = st.columns(2)
     for i, r in enumerate(rules):
         col = cols[i % 2]
         if col.checkbox(f"{r['name']}: {r['rule_str']}", key=f"strat_rule_{i}"):
-            selected_indices.append(i)
+            selected_rules.append(r)
 
-    selected_rules = [rules[i] for i in selected_indices]
+    # Include suggested rules from session state
+    suggested = st.session_state.get("suggested_rules", [])
+    if suggested:
+        st.subheader("Suggested Rules")
+        sg_cols = st.columns(2)
+        for j, sr in enumerate(suggested):
+            col = sg_cols[j % 2]
+            label = f"\u2728 Suggested: {sr['name']}: {sr['rule_str']}"
+            if col.checkbox(label, key=f"strat_suggested_{j}"):
+                selected_rules.append(sr)
 
     # ── Threshold sliders with keys for real-time reactivity ─────────────────
     st.subheader("Thresholds")
@@ -390,31 +403,42 @@ elif page == "Suggest a Rule":
                 st.error(f"Claude API error: {e}")
                 st.stop()
 
-        st.code(lambda_str, language="python")
-
         with st.spinner("Evaluating rule on ACH data..."):
             result = evaluate_suggested_rule(df, lambda_str)
 
         if result is None:
+            st.session_state["last_suggested_result"] = None
             st.error("Could not evaluate the generated rule. It may have invalid syntax or blocked content.")
         else:
-            st.success("Rule evaluated successfully!")
-            st.markdown(f"**Narrative:** {result['narrative']}")
+            # Give each suggested rule a unique name
+            idx = len(st.session_state["suggested_rules"]) + 1
+            result["name"] = f"Suggested_Rule_{idx}"
+            st.session_state["last_suggested_result"] = result
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Precision", f"{result['precision']:.1%}")
-            c2.metric("Recall", f"{result['recall']:.1%}")
-            c3.metric("Escalation Rate", f"{result['escalation_rate']:.1%}")
-            c4.metric("Fraud Caught", result["fraud_caught"])
+    # Display the last suggested result (persists across reruns)
+    result = st.session_state.get("last_suggested_result")
+    if result is not None:
+        st.success("Rule evaluated successfully!")
+        st.code(result["lambda_str"], language="python")
+        st.markdown(f"**Narrative:** {result['narrative']}")
 
-            st.markdown(f"**Rule:** `{result['rule_str']}`")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Precision", f"{result['precision']:.1%}")
+        c2.metric("Recall", f"{result['recall']:.1%}")
+        c3.metric("Escalation Rate", f"{result['escalation_rate']:.1%}")
+        c4.metric("Fraud Caught", result["fraud_caught"])
 
-            if "suggested_rules" not in st.session_state:
-                st.session_state["suggested_rules"] = []
+        st.markdown(f"**Rule:** `{result['rule_str']}`")
 
-            if st.button("Add to Strategy Builder"):
-                st.session_state["suggested_rules"].append(result)
-                st.success(f"Added **{result['name']}** to your strategy. Switch to Strategy Builder to use it.")
+        # Check if this rule was already added (by name)
+        existing_names = [r["name"] for r in st.session_state["suggested_rules"]]
+        if result["name"] in existing_names:
+            st.info("This rule is already in your strategy.")
+        elif st.button("Add to Strategy Builder"):
+            st.session_state["suggested_rules"].append(result)
+            st.session_state["last_suggested_result"] = None
+            st.success("Rule added to strategy!")
+            st.rerun()
 
     # Show previously suggested rules
     if st.session_state.get("suggested_rules"):
