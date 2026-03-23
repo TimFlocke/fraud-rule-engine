@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+import io
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -35,7 +36,15 @@ st.set_page_config(page_title="ACH Fraud Rule Engine", layout="wide")
 
 @st.cache_data
 def get_data():
-    return load_ach_data()
+    try:
+        if "data" in st.secrets and "fraud_data_csv" in st.secrets["data"]:
+            csv_content = st.secrets["data"]["fraud_data_csv"]
+            raw_df = pd.read_csv(io.StringIO(csv_content))
+            return load_ach_data(raw_df)
+        else:
+            return load_ach_data("data/fraud_data.csv")
+    except (FileNotFoundError, KeyError, AttributeError):
+        return load_ach_data("data/fraud_data.csv")
 
 
 @st.cache_data

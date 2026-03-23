@@ -69,8 +69,12 @@ FEATURE_QUALITY_WARNINGS = {
 _BINARY_FEATURES = {"rapid_velocity", "INTERNATIONAL_PH"}
 
 
-def load_ach_data(path: str = "data/fraud_data.csv") -> pd.DataFrame:
-    df = pd.read_csv(path)
+def load_ach_data(source: str | pd.DataFrame = "data/fraud_data.csv") -> pd.DataFrame:
+    """Load ACH data from a file path or an already-loaded DataFrame."""
+    if isinstance(source, pd.DataFrame):
+        df = source.copy()
+    else:
+        df = pd.read_csv(source)
     df = df[df["PAYMENT_METHOD_TYPE"] == "bank_account"].copy()
     df["rapid_velocity"] = df["rapid_velocity"].astype(int)
     df.reset_index(drop=True, inplace=True)
