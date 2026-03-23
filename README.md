@@ -2,6 +2,12 @@
 
 A fraud rule engine for ACH (bank account) transfers that auto-generates interpretable rules from a decision tree, lets you build a three-action strategy (Accept / Refer / Reject), and supports natural-language rule suggestions via Claude API.
 
+## Live Demo
+
+🚀 **[Try the app live here](https://ach-fraud-rule-engine.streamlit.app)**
+
+No setup required—just click and explore!
+
 ## Features
 
 - **Data Health Dashboard** — row counts, fraud rate, feature distributions, missing value checks, data quality warnings
