@@ -4,7 +4,7 @@ A fraud rule engine for ACH (bank account) transfers that auto-generates interpr
 
 ## Live Demo
 
-🚀 **[Try the app live here](https://ach-fraud-rule-engine.streamlit.app)**
+🚀 **[Try the app live here](https://fraud-rule-engine.streamlit.app/)**
 
 No setup required—just click and explore!
 
