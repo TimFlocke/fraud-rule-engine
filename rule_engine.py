@@ -476,38 +476,39 @@ def evaluate_strategy(
 
 # ── Claude API rule suggestion ───────────────────────────────────────────────
 
-CLAUDE_SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a fraud analyst. Given a user's description of a fraud pattern,
-    generate a Python lambda rule that evaluates a single pandas DataFrame row.
+def build_system_prompt(feature_columns: list[str]) -> str:
+    col_list = ", ".join(feature_columns)
+    return textwrap.dedent(f"""\
+        You are a fraud analyst. Given a user's description of a fraud pattern,
+        generate a Python lambda rule that evaluates a single pandas DataFrame row.
 
-    Available columns: EMAIL_RISK_SCORE, TRANSFER_AMOUNT_USD,
-    ACCOUNT_AGE_AT_PURCHASE_DAYS, INTERNATIONAL_PH, rapid_velocity,
-    prior_transfers, prior_unique_phone_cntry, is_fraud.
+        Available columns: {col_list}, is_fraud.
 
-    Categorical one-hot columns (value is 0 or 1):
-    EMAIL_DOMAIN_BIN_<value> (e.g., EMAIL_DOMAIN_BIN_gmail, EMAIL_DOMAIN_BIN_yahoo)
-    TRANSFER_TYPE_BIN_<value> (e.g., TRANSFER_TYPE_BIN_buy, TRANSFER_TYPE_BIN_sell)
+        Categorical one-hot columns (value is 0 or 1):
+        EMAIL_DOMAIN_BIN_<value> (e.g., EMAIL_DOMAIN_BIN_gmail, EMAIL_DOMAIN_BIN_yahoo)
+        TRANSFER_TYPE_BIN_<value> (e.g., TRANSFER_TYPE_BIN_buy, TRANSFER_TYPE_BIN_sell)
 
-    Return ONLY the lambda function on one line, nothing else.
-    Example: lambda row: (row['EMAIL_RISK_SCORE'] > 100) & (row['rapid_velocity'] == 1)
-""")
+        Return ONLY the lambda function on one line, nothing else.
+        Example: lambda row: (row['EMAIL_RISK_SCORE'] > 100) & (row['rapid_velocity'] == 1)
+    """)
 
 
-def suggest_rule_via_claude(user_text: str, api_key: str) -> str:
+def suggest_rule_via_claude(user_text: str, api_key: str, feature_columns: list[str] | None = None) -> str:
     """Call Claude API to parse a natural-language rule suggestion into a lambda."""
     import anthropic
 
+    system = build_system_prompt(feature_columns if feature_columns is not None else FEATURES)
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=256,
-        system=CLAUDE_SYSTEM_PROMPT,
+        system=system,
         messages=[{"role": "user", "content": user_text}],
     )
     return message.content[0].text.strip()
 
 
-def evaluate_suggested_rule(df: pd.DataFrame, lambda_str: str) -> dict | None:
+def evaluate_suggested_rule(df: pd.DataFrame, lambda_str: str, feature_columns: list[str] | None = None) -> dict | None:
     """Evaluate a lambda string against the dataset and return metrics + narrative."""
     if not lambda_str.startswith("lambda row:"):
         return None
@@ -518,9 +519,18 @@ def evaluate_suggested_rule(df: pd.DataFrame, lambda_str: str) -> dict | None:
         if b in lower:
             return None
 
-    # Build eval df with one-hot columns available
-    dummies, _ = _onehot_encode(df, CATEGORICAL_FEATURES)
-    df_eval = pd.concat([df, dummies[[c for c in dummies.columns if c not in df.columns]]], axis=1)
+    if feature_columns is not None:
+        # For uploaded datasets, use df as-is; still encode ACH categorical cols if present
+        cat_present = [c for c in CATEGORICAL_FEATURES if c in df.columns]
+        if cat_present:
+            dummies, _ = _onehot_encode(df, cat_present)
+            df_eval = pd.concat([df, dummies[[c for c in dummies.columns if c not in df.columns]]], axis=1)
+        else:
+            df_eval = df
+    else:
+        # ACH default path
+        dummies, _ = _onehot_encode(df, CATEGORICAL_FEATURES)
+        df_eval = pd.concat([df, dummies[[c for c in dummies.columns if c not in df.columns]]], axis=1)
 
     try:
         fn = eval(lambda_str)

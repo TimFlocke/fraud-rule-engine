@@ -48,8 +48,8 @@ def get_data():
 
 
 @st.cache_data
-def get_rules(_df_hash, max_depth, min_leaf, min_split, _feature_key):
-    df = get_data()
+def get_rules(_df_hash, max_depth, min_leaf, min_split, _feature_key, _df=None):
+    df = _df if _df is not None else get_data()
     features = list(_feature_key)
     return extract_rules(
         df,
@@ -72,21 +72,76 @@ if "suggested_rules" not in st.session_state:
     st.session_state["suggested_rules"] = []
 if "last_suggested_result" not in st.session_state:
     st.session_state["last_suggested_result"] = None
+if "active_df" not in st.session_state:
+    st.session_state["active_df"] = None
+if "dataset_name" not in st.session_state:
+    st.session_state["dataset_name"] = "ACH (default)"
+if "feature_columns" not in st.session_state:
+    _init_df = st.session_state["active_df"] if st.session_state.get("active_df") is not None else get_data()
+    st.session_state["feature_columns"] = [c for c in _init_df.columns if c != TARGET]
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
-st.sidebar.title("ACH Fraud Rule Engine")
-page = st.sidebar.radio("Navigate", ["Data Health", "Rule Discovery", "Strategy Builder", "Suggest a Rule"])
+st.sidebar.title("Fraud Rule Engine")
+page = st.sidebar.radio("Navigate", ["Ingest Data", "Data Health", "Rule Discovery", "Strategy Builder", "Suggest a Rule"])
 
 try:
-    df = get_data()
+    if st.session_state.get("active_df") is not None:
+        df = st.session_state["active_df"]
+    else:
+        df = get_data()
 except FileNotFoundError:
     st.error("Place your CSV at `data/fraud_data.csv` and reload.")
     st.stop()
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PAGE 0: Ingest Data
+# ══════════════════════════════════════════════════════════════════════════════
+if page == "Ingest Data":
+    st.header("Ingest Data")
+
+    st.markdown("A default ACH fraud dataset is loaded automatically. Upload your own CSV to analyse a different dataset.")
+
+    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+
+    if uploaded_file is not None:
+        active_df = pd.read_csv(uploaded_file)
+        new_dataset_name = uploaded_file.name
+        st.session_state["active_df"] = active_df
+        if st.session_state.get("dataset_name") != new_dataset_name:
+            st.session_state["dataset_name"] = new_dataset_name
+            _new_cols = [c for c in active_df.columns if c != "is_fraud"]
+            st.session_state["feature_columns"] = [
+                c for c in _new_cols
+                if "id" not in c and "ID" not in c and "Id" not in c
+            ]
+    elif st.session_state.get("active_df") is not None:
+        active_df = st.session_state["active_df"]
+    else:
+        active_df = get_data()
+        st.session_state["active_df"] = None
+        st.session_state["dataset_name"] = "ACH (default)"
+
+    available_cols = [c for c in active_df.columns if c != "is_fraud"]
+
+    col1, col2 = st.columns(2)
+    col1.metric("Records", f"{len(active_df):,}")
+    col2.metric("Columns", len(active_df.columns))
+
+    valid_default = [c for c in st.session_state.get("feature_columns", available_cols) if c in available_cols]
+    selected = st.multiselect(
+        "Select features for rule generation",
+        options=available_cols,
+        default=valid_default,
+    )
+    st.session_state["feature_columns"] = selected
+
+    preview_cols = [c for c in selected if c in active_df.columns] + (["is_fraud"] if "is_fraud" in active_df.columns else [])
+    st.dataframe(active_df[preview_cols].head(10) if preview_cols else active_df.head(10), use_container_width=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PAGE 1: Data Health
 # ══════════════════════════════════════════════════════════════════════════════
-if page == "Data Health":
+elif page == "Data Health":
     st.header("Data Health")
 
     col1, col2, col3 = st.columns(3)
@@ -97,7 +152,8 @@ if page == "Data Health":
 
     # Missing values
     st.subheader("Missing Values")
-    missing = df[FEATURES + [TARGET]].isnull().sum()
+    check_cols = [c for c in st.session_state["feature_columns"] if c in df.columns] + [TARGET]
+    missing = df[check_cols].isnull().sum()
     missing = missing[missing > 0]
     if missing.empty:
         st.success("No missing values in feature columns.")
@@ -106,14 +162,14 @@ if page == "Data Health":
 
     # Feature explorer
     st.subheader("Feature Explorer")
-    feat = st.selectbox("Select feature", ALL_SELECTABLE_FEATURES + [TARGET])
+    feat = st.selectbox("Select feature", st.session_state["feature_columns"] + [TARGET])
 
     # Data dictionary description
-    if feat in FEATURE_DICTIONARY:
+    if feat in FEATURE_DICTIONARY and feat in df.columns:
         st.info(f"**{feat}:** {FEATURE_DICTIONARY[feat]}")
 
     # Feature-specific data quality warning
-    if feat in FEATURE_QUALITY_WARNINGS:
+    if feat in FEATURE_QUALITY_WARNINGS and feat in df.columns:
         warning_text = FEATURE_QUALITY_WARNINGS[feat](df)
         if warning_text:
             st.warning(warning_text)
@@ -143,14 +199,16 @@ elif page == "Rule Discovery":
 
     # ── Feature selector ─────────────────────────────────────────────────────
     st.subheader("Feature Selection")
+    _available = [c for c in df.columns if c != TARGET]
     selected_features = st.multiselect(
         "Select Features for Rule Generation",
-        options=ALL_SELECTABLE_FEATURES,
-        default=st.session_state["selected_features"],
+        options=_available,
+        default=[c for c in st.session_state["feature_columns"] if c in _available],
         key="feature_multiselect",
     )
     # Persist selection
     st.session_state["selected_features"] = selected_features
+    st.session_state["feature_columns"] = selected_features
 
     if not selected_features:
         st.warning("Select at least one feature to generate rules.")
@@ -174,11 +232,11 @@ elif page == "Rule Discovery":
     min_split = st.session_state["min_samples_split"]
     feature_key = tuple(sorted(selected_features))
 
-    rules = get_rules(df_hash(df), max_depth, min_leaf, min_split, feature_key)
+    rules = get_rules(df_hash(df), max_depth, min_leaf, min_split, feature_key, _df=df)
 
     if regenerate:
         get_rules.clear()
-        rules = get_rules(df_hash(df), max_depth, min_leaf, min_split, feature_key)
+        rules = get_rules(df_hash(df), max_depth, min_leaf, min_split, feature_key, _df=df)
         st.success(f"Rules regenerated with {len(selected_features)} features")
 
     if not rules:
@@ -250,8 +308,8 @@ elif page == "Strategy Builder":
         )
 
     min_split = st.session_state["min_samples_split"]
-    feature_key = tuple(sorted(st.session_state["selected_features"]))
-    rules = get_rules(df_hash(df), 4, 30, min_split, feature_key)
+    feature_key = tuple(sorted(st.session_state["feature_columns"]))
+    rules = get_rules(df_hash(df), 4, 30, min_split, feature_key, _df=df)
     if not rules:
         st.warning("No rules available. Check Rule Discovery page.")
         st.stop()
@@ -398,13 +456,13 @@ elif page == "Suggest a Rule":
     if st.button("Generate & Evaluate Rule", disabled=not (api_key and user_text)):
         with st.spinner("Asking Claude to generate a rule..."):
             try:
-                lambda_str = suggest_rule_via_claude(user_text, api_key)
+                lambda_str = suggest_rule_via_claude(user_text, api_key, feature_columns=st.session_state["feature_columns"])
             except Exception as e:
                 st.error(f"Claude API error: {e}")
                 st.stop()
 
         with st.spinner("Evaluating rule on ACH data..."):
-            result = evaluate_suggested_rule(df, lambda_str)
+            result = evaluate_suggested_rule(df, lambda_str, feature_columns=st.session_state["feature_columns"])
 
         if result is None:
             st.session_state["last_suggested_result"] = None
