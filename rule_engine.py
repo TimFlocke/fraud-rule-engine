@@ -356,13 +356,17 @@ def _prepare_features(
     """
     cat_cols = [
         c for c in feature_columns
-        if c in df.columns and df[c].dtype == object and df[c].nunique() < 20
+        if c in df.columns
+        and not pd.api.types.is_numeric_dtype(df[c])
+        and df[c].nunique() < 20
     ]
-    excluded = {
+    # Non-numeric columns with cardinality >= 20 are excluded entirely.
+    # numeric_cols is built from an explicit positive check so no non-numeric
+    # column can slip through regardless of dtype representation.
+    numeric_cols = [
         c for c in feature_columns
-        if c in df.columns and df[c].dtype == object and df[c].nunique() >= 20
-    }
-    numeric_cols = [c for c in feature_columns if c not in cat_cols and c not in excluded]
+        if c in df.columns and pd.api.types.is_numeric_dtype(df[c])
+    ]
 
     parts = []
     all_col_names = []
