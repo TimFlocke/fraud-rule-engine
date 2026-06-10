@@ -354,6 +354,8 @@ def _prepare_features(
     Returns (X DataFrame, list of actual column names used, list of original
     categorical column names that were encoded).
     """
+    import streamlit as st
+    st.write({c: (str(df[c].dtype), df[c].nunique()) for c in feature_columns if c in df.columns})
     cat_cols = [
         c for c in feature_columns
         if c in df.columns
