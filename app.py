@@ -74,6 +74,7 @@ if "last_suggested_result" not in st.session_state:
     st.session_state["last_suggested_result"] = None
 if "active_df" not in st.session_state:
     st.session_state["active_df"] = None
+    get_rules.clear()  # discard any rules cached from a previous browser session
 if "dataset_name" not in st.session_state:
     st.session_state["dataset_name"] = "ACH (default)"
 if "feature_columns" not in st.session_state:
