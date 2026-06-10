@@ -95,17 +95,17 @@ def _onehot_encode(df: pd.DataFrame, cat_cols: list[str]) -> tuple[pd.DataFrame,
     return dummies, list(dummies.columns)
 
 
-def _is_onehot_col(col_name: str) -> bool:
+def _is_onehot_col(col_name: str, cat_cols: list[str] | None = None) -> bool:
     """Check if a column name looks like a one-hot encoded categorical."""
-    for cat in CATEGORICAL_FEATURES:
+    for cat in (cat_cols or CATEGORICAL_FEATURES):
         if col_name.startswith(cat + "_"):
             return True
     return False
 
 
-def _onehot_readable(col_name: str) -> str:
-    """Turn 'EMAIL_DOMAIN_BIN_gmail' into 'Gmail domain', etc."""
-    for cat in CATEGORICAL_FEATURES:
+def _onehot_readable(col_name: str, cat_cols: list[str] | None = None) -> str:
+    """Turn a one-hot dummy column name into a human-readable phrase."""
+    for cat in (cat_cols or CATEGORICAL_FEATURES):
         prefix = cat + "_"
         if col_name.startswith(prefix):
             value = col_name[len(prefix):]
@@ -122,7 +122,7 @@ def _onehot_readable(col_name: str) -> str:
 
 # ── Decision-tree rule extraction ────────────────────────────────────────────
 
-def _path_to_rule_str(tree, feature_names, path_nodes):
+def _path_to_rule_str(tree, feature_names, path_nodes, cat_cols=None):
     """Convert a root-to-leaf path into a human-readable rule string."""
     conditions = []
     for i in range(len(path_nodes) - 1):
@@ -131,7 +131,7 @@ def _path_to_rule_str(tree, feature_names, path_nodes):
         feat = feature_names[tree.feature[node]]
         thresh = tree.threshold[node]
 
-        if feat in _BINARY_FEATURES or _is_onehot_col(feat):
+        if feat in _BINARY_FEATURES or _is_onehot_col(feat, cat_cols):
             if child == tree.children_left[node]:
                 conditions.append(f"{feat} == False")
             else:
@@ -144,7 +144,7 @@ def _path_to_rule_str(tree, feature_names, path_nodes):
     return " AND ".join(conditions)
 
 
-def _path_to_lambda_str(tree, feature_names, path_nodes):
+def _path_to_lambda_str(tree, feature_names, path_nodes, cat_cols=None):
     """Build a pandas-compatible lambda string for eval."""
     parts = []
     for i in range(len(path_nodes) - 1):
@@ -153,7 +153,7 @@ def _path_to_lambda_str(tree, feature_names, path_nodes):
         feat = feature_names[tree.feature[node]]
         thresh = tree.threshold[node]
 
-        if feat in _BINARY_FEATURES or _is_onehot_col(feat):
+        if feat in _BINARY_FEATURES or _is_onehot_col(feat, cat_cols):
             if child == tree.children_left[node]:
                 parts.append(f"(row['{feat}'] == 0)")
             else:
@@ -344,13 +344,25 @@ def _generate_narrative(rule_str: str, metrics: dict) -> str:
 def _prepare_features(
     df: pd.DataFrame,
     feature_columns: list[str],
-) -> tuple[pd.DataFrame, list[str]]:
+) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Build the feature matrix, one-hot encoding any categorical columns.
 
-    Returns (X DataFrame with all columns, list of actual column names used).
+    Categorical columns are detected dynamically: any column in feature_columns
+    with object dtype and cardinality < 20 is one-hot encoded. Columns with
+    cardinality >= 20 are excluded from the feature matrix entirely.
+
+    Returns (X DataFrame, list of actual column names used, list of original
+    categorical column names that were encoded).
     """
-    numeric_cols = [c for c in feature_columns if c not in CATEGORICAL_FEATURES]
-    cat_cols = [c for c in feature_columns if c in CATEGORICAL_FEATURES]
+    cat_cols = [
+        c for c in feature_columns
+        if c in df.columns and df[c].dtype == object and df[c].nunique() < 20
+    ]
+    excluded = {
+        c for c in feature_columns
+        if c in df.columns and df[c].dtype == object and df[c].nunique() >= 20
+    }
+    numeric_cols = [c for c in feature_columns if c not in cat_cols and c not in excluded]
 
     parts = []
     all_col_names = []
@@ -366,10 +378,10 @@ def _prepare_features(
             all_col_names.extend(dummy_names)
 
     if not parts:
-        return pd.DataFrame(index=df.index), []
+        return pd.DataFrame(index=df.index), [], []
 
     X = pd.concat(parts, axis=1)
-    return X, all_col_names
+    return X, all_col_names, cat_cols
 
 
 def extract_rules(
@@ -382,7 +394,7 @@ def extract_rules(
     """Train a decision tree and extract fraud-leaning leaf paths as rules."""
     feature_columns = feature_columns or FEATURES
 
-    X, actual_feature_names = _prepare_features(df, feature_columns)
+    X, actual_feature_names, cat_cols = _prepare_features(df, feature_columns)
     if X.empty:
         return []
     y = df[TARGET].values
@@ -422,8 +434,8 @@ def extract_rules(
         if leaf_fraud_rate <= base_rate:
             continue
 
-        rule_str = _path_to_rule_str(tree, feature_names, leaf_path)
-        lambda_str = _path_to_lambda_str(tree, feature_names, leaf_path)
+        rule_str = _path_to_rule_str(tree, feature_names, leaf_path, cat_cols)
+        lambda_str = _path_to_lambda_str(tree, feature_names, leaf_path, cat_cols)
 
         if not rule_str:
             continue

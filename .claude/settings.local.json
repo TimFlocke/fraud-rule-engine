@@ -11,7 +11,8 @@
       "Bash(python test_stage3.py --mini)",
       "Bash(python -X utf8 -c ' *)",
       "Bash(python -m py_compile daily_brief.py)",
-      "Bash(python daily_brief.py)"
+      "Bash(python daily_brief.py)",
+      "Bash(python -c ' *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\timot\\IV_Crusher"

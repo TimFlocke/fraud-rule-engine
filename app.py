@@ -79,6 +79,16 @@ if "dataset_name" not in st.session_state:
 if "feature_columns" not in st.session_state:
     _init_df = st.session_state["active_df"] if st.session_state.get("active_df") is not None else get_data()
     st.session_state["feature_columns"] = [c for c in _init_df.columns if c != TARGET]
+if "strat_selected_names" not in st.session_state:
+    st.session_state["strat_selected_names"] = []
+if "strat_accept_thresh" not in st.session_state:
+    st.session_state["strat_accept_thresh"] = 0.3
+if "strat_refer_thresh" not in st.session_state:
+    st.session_state["strat_refer_thresh"] = 0.7
+if "strat_esc_warn" not in st.session_state:
+    st.session_state["strat_esc_warn"] = 0.20
+if "_strat_prev_select_all" not in st.session_state:
+    st.session_state["_strat_prev_select_all"] = False
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 st.sidebar.title("Fraud Rule Engine")
@@ -125,7 +135,7 @@ if page == "Ingest Data":
 
     col1, col2 = st.columns(2)
     col1.metric("Records", f"{len(active_df):,}")
-    col2.metric("Columns", len(active_df.columns))
+    col2.metric("Columns", len(st.session_state["feature_columns"]))
 
     valid_default = [c for c in st.session_state.get("feature_columns", available_cols) if c in available_cols]
     selected = st.multiselect(
@@ -315,43 +325,88 @@ elif page == "Strategy Builder":
         st.stop()
 
     # ── Rule selection — full text ───────────────────────────────────────────
+    suggested = st.session_state.get("suggested_rules", [])
+    all_rule_objs = rules + suggested
+    all_rule_names = [r["name"] for r in all_rule_objs]
+
+    # React to select_all being toggled ON or OFF
+    prev_select_all = st.session_state.get("_strat_prev_select_all", False)
+    cur_select_all = st.session_state.get("strat_select_all", False)
+    if cur_select_all and not prev_select_all:
+        st.session_state["strat_selected_names"] = list(all_rule_names)
+        for r in all_rule_objs:
+            st.session_state[f"strat_cb_{r['name']}"] = True
+    elif not cur_select_all and prev_select_all:
+        st.session_state["strat_selected_names"] = []
+        for r in all_rule_objs:
+            st.session_state[f"strat_cb_{r['name']}"] = False
+
+    # Auto-uncheck select_all when any individual rule is manually deselected
+    all_currently_selected = bool(all_rule_names) and all(
+        st.session_state.get(f"strat_cb_{n}", n in st.session_state.get("strat_selected_names", []))
+        for n in all_rule_names
+    )
+    if cur_select_all and not all_currently_selected:
+        st.session_state["strat_select_all"] = False
+
     st.subheader("Select Rules")
+    select_all = st.checkbox("Select all rules", key="strat_select_all")
+    st.session_state["_strat_prev_select_all"] = select_all
+
     selected_rules = []
+    new_selected_names = []
     cols = st.columns(2)
     for i, r in enumerate(rules):
+        cb_key = f"strat_cb_{r['name']}"
+        if cb_key not in st.session_state:
+            st.session_state[cb_key] = r["name"] in st.session_state.get("strat_selected_names", [])
         col = cols[i % 2]
-        if col.checkbox(f"{r['name']}: {r['rule_str']}", key=f"strat_rule_{i}"):
+        if col.checkbox(f"{r['name']}: {r['rule_str']}", key=cb_key):
             selected_rules.append(r)
+            new_selected_names.append(r["name"])
 
-    # Include suggested rules from session state
-    suggested = st.session_state.get("suggested_rules", [])
     if suggested:
         st.subheader("Suggested Rules")
         sg_cols = st.columns(2)
         for j, sr in enumerate(suggested):
+            cb_key = f"strat_cb_{sr['name']}"
+            if cb_key not in st.session_state:
+                st.session_state[cb_key] = sr["name"] in st.session_state.get("strat_selected_names", [])
             col = sg_cols[j % 2]
-            label = f"\u2728 Suggested: {sr['name']}: {sr['rule_str']}"
-            if col.checkbox(label, key=f"strat_suggested_{j}"):
+            label = f"✨ Suggested: {sr['name']}: {sr['rule_str']}"
+            if col.checkbox(label, key=cb_key):
                 selected_rules.append(sr)
+                new_selected_names.append(sr["name"])
 
-    # ── Threshold sliders with keys for real-time reactivity ─────────────────
+    st.session_state["strat_selected_names"] = new_selected_names
+
+    # ── Threshold sliders with keys for real-time reactivity ─────────
     st.subheader("Thresholds")
     c1, c2, c3 = st.columns(3)
     accept_threshold = c1.slider(
-        "Accept threshold", 0.0, 1.0, 0.3, 0.05,
+        "Accept threshold", 0.0, 1.0,
+        value=st.session_state["strat_accept_thresh"],
+        step=0.05,
         key="accept_thresh",
         help="Below this risk score → Accept",
     )
+    st.session_state["strat_accept_thresh"] = accept_threshold
     refer_threshold = c2.slider(
-        "Refer threshold", 0.0, 1.0, 0.7, 0.05,
+        "Refer threshold", 0.0, 1.0,
+        value=st.session_state["strat_refer_thresh"],
+        step=0.05,
         key="refer_thresh",
         help="Between accept and this → Refer; above → Reject",
     )
+    st.session_state["strat_refer_thresh"] = refer_threshold
     esc_warn = c3.slider(
-        "Escalation rate warning", 0.0, 0.5, 0.20, 0.01,
+        "Escalation rate warning", 0.0, 0.5,
+        value=st.session_state["strat_esc_warn"],
+        step=0.01,
         key="esc_warn_thresh",
         help="Warn if combined escalation exceeds this",
     )
+    st.session_state["strat_esc_warn"] = esc_warn
 
     if refer_threshold <= accept_threshold:
         st.error("Refer threshold must be greater than accept threshold.")
