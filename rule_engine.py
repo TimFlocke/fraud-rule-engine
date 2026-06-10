@@ -360,6 +360,7 @@ def _prepare_features(
         c for c in feature_columns
         if c in df.columns
         and not pd.api.types.is_numeric_dtype(df[c])
+        and (pd.api.types.is_string_dtype(df[c]) or df[c].dtype == object)
         and df[c].nunique() < 20
     ]
     # Non-numeric columns with cardinality >= 20 are excluded entirely.
@@ -367,7 +368,9 @@ def _prepare_features(
     # column can slip through regardless of dtype representation.
     numeric_cols = [
         c for c in feature_columns
-        if c in df.columns and pd.api.types.is_numeric_dtype(df[c])
+        if c in df.columns
+        and pd.api.types.is_numeric_dtype(df[c])
+        and not pd.api.types.is_string_dtype(df[c])
     ]
 
     parts = []
