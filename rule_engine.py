@@ -354,23 +354,20 @@ def _prepare_features(
     Returns (X DataFrame, list of actual column names used, list of original
     categorical column names that were encoded).
     """
-    import streamlit as st
-    st.write({c: (str(df[c].dtype), df[c].nunique()) for c in feature_columns if c in df.columns})
-    cat_cols = [
+    excluded_cols = set(
         c for c in feature_columns
-        if c in df.columns
-        and not pd.api.types.is_numeric_dtype(df[c])
-        and (pd.api.types.is_string_dtype(df[c]) or df[c].dtype == object)
-        and df[c].nunique() < 20
-    ]
-    # Non-numeric columns with cardinality >= 20 are excluded entirely.
-    # numeric_cols is built from an explicit positive check so no non-numeric
-    # column can slip through regardless of dtype representation.
+        if c in df.columns and not pd.api.types.is_numeric_dtype(df[c])
+    )
     numeric_cols = [
         c for c in feature_columns
         if c in df.columns
-        and pd.api.types.is_numeric_dtype(df[c])
-        and not pd.api.types.is_string_dtype(df[c])
+        and c not in excluded_cols
+    ]
+    # Non-numeric columns with cardinality >= 20 are excluded entirely.
+    cat_cols = [
+        c for c in excluded_cols
+        if c in df.columns
+        and df[c].nunique() < 20
     ]
 
     parts = []

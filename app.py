@@ -119,6 +119,7 @@ if page == "Ingest Data":
         new_dataset_name = uploaded_file.name
         st.session_state["active_df"] = active_df
         if st.session_state.get("dataset_name") != new_dataset_name:
+            get_rules.clear()
             st.session_state["dataset_name"] = new_dataset_name
             _new_cols = [c for c in active_df.columns if c != "is_fraud"]
             st.session_state["feature_columns"] = [
