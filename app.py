@@ -13,6 +13,7 @@ from rule_engine import (
     suggest_rule_via_claude, evaluate_suggested_rule, add_suggested_rule,
     FEATURE_DICTIONARY, FEATURE_QUALITY_WARNINGS,
     ALL_SELECTABLE_FEATURES,
+    build_analyst_system_prompt, ask_analyst_via_concentrate,
 )
 from metrics import calc_rule_metrics
 
@@ -80,6 +81,8 @@ if "dataset_name" not in st.session_state:
 if "feature_columns" not in st.session_state:
     _init_df = st.session_state["active_df"] if st.session_state.get("active_df") is not None else get_data()
     st.session_state["feature_columns"] = [c for c in _init_df.columns if c != TARGET]
+if "last_analyst_response" not in st.session_state:
+    st.session_state["last_analyst_response"] = None
 if "strat_selected_names" not in st.session_state:
     st.session_state["strat_selected_names"] = []
 if "strat_accept_thresh" not in st.session_state:
@@ -93,7 +96,8 @@ if "_strat_prev_select_all" not in st.session_state:
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 st.sidebar.title("Fraud Rule Engine")
-page = st.sidebar.radio("Navigate", ["Ingest Data", "Data Health", "Rule Discovery", "Strategy Builder", "Suggest a Rule"])
+page = st.sidebar.radio("Navigate", ["Ingest Data", "Data Health", "Rule Discovery", "Strategy Builder", "AI Analyst"])
+
 
 try:
     if st.session_state.get("active_df") is not None:
@@ -489,74 +493,162 @@ elif page == "Strategy Builder":
         )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PAGE 4: Suggest a Rule
+# PAGE 4: AI Analyst
 # ══════════════════════════════════════════════════════════════════════════════
-elif page == "Suggest a Rule":
-    st.header("Suggest a Rule")
-    st.markdown(
-        "Describe a fraud pattern in plain English. Claude will generate a rule, "
-        "and we'll evaluate it on the ACH dataset."
+elif page == "AI Analyst":
+    st.header("AI Analyst")
+
+    # Concentrate badge
+    if os.path.exists("concentrate_logo.png"):
+        import base64 as _b64
+        with open("concentrate_logo.png", "rb") as _f:
+            _logo_b64 = _b64.b64encode(_f.read()).decode()
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:8px;margin:4px 0 12px 0;">'
+            f'<span style="font-size:0.85rem;color:#888;">Powered by</span>'
+            f'<a href="https://concentrate.ai" target="_blank">'
+            f'<img src="data:image/png;base64,{_logo_b64}" width="180">'
+            f'</a></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<a href="https://concentrate.ai" target="_blank" style="font-size:0.85rem;">Powered by Concentrate.ai</a>',
+            unsafe_allow_html=True,
+        )
+
+    # API key — env var first (.env locally, env on Cloud), then st.secrets
+    api_key = os.getenv("CONCENTRATE_API_KEY")
+    if not api_key:
+        try:
+            api_key = st.secrets["CONCENTRATE_API_KEY"]
+        except (KeyError, AttributeError):
+            pass
+    if not api_key:
+        api_key = st.text_input("Concentrate API key", type="password",
+                                help="Add CONCENTRATE_API_KEY to .env file or enter here.")
+    if not api_key:
+        st.error("API key not found. Add CONCENTRATE_API_KEY to .env file.")
+
+    # Mode toggle
+    mode = st.radio(
+        "Mode",
+        options=["Suggest a Rule", "Ask the Analyst"],
+        horizontal=True,
+        label_visibility="collapsed",
     )
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        api_key = st.text_input("Anthropic API key", type="password",
-                                help="Add ANTHROPIC_API_KEY to .env file or enter here.")
-    if not api_key:
-        st.error("API key not found. Add ANTHROPIC_API_KEY to .env file.")
-
-    user_text = st.text_area(
-        "Describe the fraud pattern",
-        placeholder="e.g., Flag transactions where EMAIL_RISK_SCORE > 120 and rapid_velocity is true",
+    # Model selector
+    _MODEL_OPTIONS = {
+        "anthropic/claude-sonnet-4-6": "Claude Sonnet 4.6",
+        "openai/gpt-4o": "GPT-4o",
+        "google/gemini-1.5-pro": "Gemini 1.5 Pro",
+    }
+    selected_model = st.selectbox(
+        "Model",
+        options=list(_MODEL_OPTIONS.keys()),
+        format_func=lambda x: _MODEL_OPTIONS[x],
     )
 
-    if st.button("Generate & Evaluate Rule", disabled=not (api_key and user_text)):
-        with st.spinner("Asking Claude to generate a rule..."):
-            try:
-                lambda_str = suggest_rule_via_claude(user_text, api_key, feature_columns=st.session_state["feature_columns"])
-            except Exception as e:
-                st.error(f"Claude API error: {e}")
-                st.stop()
+    if mode == "Suggest a Rule":
+        st.markdown(
+            "Describe a fraud pattern in plain English and the AI will generate a rule, "
+            "which we'll evaluate on your dataset."
+        )
 
-        with st.spinner("Evaluating rule on ACH data..."):
-            result = evaluate_suggested_rule(df, lambda_str, feature_columns=st.session_state["feature_columns"])
+        user_text = st.text_area(
+            "Describe the fraud pattern",
+            placeholder="e.g., Flag transactions where EMAIL_RISK_SCORE > 120 and rapid_velocity is true",
+            label_visibility="collapsed",
+        )
 
-        if result is None:
-            st.session_state["last_suggested_result"] = None
-            st.error("Could not evaluate the generated rule. It may have invalid syntax or blocked content.")
-        else:
-            # Give each suggested rule a unique name
-            idx = len(st.session_state["suggested_rules"]) + 1
-            result["name"] = f"Suggested_Rule_{idx}"
-            st.session_state["last_suggested_result"] = result
+        if st.button("Generate & Evaluate Rule", disabled=not (api_key and user_text)):
+            with st.spinner("Generating rule..."):
+                try:
+                    lambda_str = suggest_rule_via_claude(
+                        user_text, api_key,
+                        feature_columns=st.session_state["feature_columns"],
+                        model=selected_model,
+                    )
+                except Exception as e:
+                    st.error(f"API error: {e}")
+                    st.stop()
 
-    # Display the last suggested result (persists across reruns)
-    result = st.session_state.get("last_suggested_result")
-    if result is not None:
-        st.success("Rule evaluated successfully!")
-        st.code(result["lambda_str"], language="python")
-        st.markdown(f"**Narrative:** {result['narrative']}")
+            with st.spinner("Evaluating rule on dataset..."):
+                result = evaluate_suggested_rule(df, lambda_str, feature_columns=st.session_state["feature_columns"])
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Precision", f"{result['precision']:.1%}")
-        c2.metric("Recall", f"{result['recall']:.1%}")
-        c3.metric("Escalation Rate", f"{result['escalation_rate']:.1%}")
-        c4.metric("Fraud Caught", result["fraud_caught"])
+            if result is None:
+                st.session_state["last_suggested_result"] = None
+                st.error("Could not evaluate the generated rule. It may have invalid syntax or blocked content.")
+            else:
+                idx = len(st.session_state["suggested_rules"]) + 1
+                result["name"] = f"Suggested_Rule_{idx}"
+                st.session_state["last_suggested_result"] = result
 
-        st.markdown(f"**Rule:** `{result['rule_str']}`")
+        # Display the last suggested result (persists across reruns)
+        result = st.session_state.get("last_suggested_result")
+        if result is not None:
+            st.success("Rule evaluated successfully!")
+            st.code(result["lambda_str"], language="python")
+            st.markdown(f"**Narrative:** {result['narrative']}")
 
-        # Check if this rule was already added (by name)
-        existing_names = [r["name"] for r in st.session_state["suggested_rules"]]
-        if result["name"] in existing_names:
-            st.info("This rule is already in your strategy.")
-        elif st.button("Add to Strategy Builder"):
-            st.session_state["suggested_rules"].append(result)
-            st.session_state["last_suggested_result"] = None
-            st.success("Rule added to strategy!")
-            st.rerun()
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Precision", f"{result['precision']:.1%}")
+            c2.metric("Recall", f"{result['recall']:.1%}")
+            c3.metric("Escalation Rate", f"{result['escalation_rate']:.1%}")
+            c4.metric("Fraud Caught", result["fraud_caught"])
 
-    # Show previously suggested rules
-    if st.session_state.get("suggested_rules"):
-        st.subheader("Previously Suggested Rules")
-        for i, r in enumerate(st.session_state["suggested_rules"]):
-            st.markdown(f"**{i+1}.** `{r['rule_str']}` — Precision: {r['precision']:.1%}, Recall: {r['recall']:.1%}")
+            st.markdown(f"**Rule:** `{result['rule_str']}`")
+
+            existing_names = [r["name"] for r in st.session_state["suggested_rules"]]
+            if result["name"] in existing_names:
+                st.info("This rule is already in your strategy.")
+            elif st.button("Add to Strategy Builder"):
+                st.session_state["suggested_rules"].append(result)
+                st.session_state["last_suggested_result"] = None
+                st.success("Rule added to strategy!")
+                st.rerun()
+
+        if st.session_state.get("suggested_rules"):
+            st.subheader("Previously Suggested Rules")
+            for i, r in enumerate(st.session_state["suggested_rules"]):
+                st.markdown(f"**{i+1}.** `{r['rule_str']}` — Precision: {r['precision']:.1%}, Recall: {r['recall']:.1%}")
+
+    else:  # Ask the Analyst
+        st.markdown(
+            "Ask a question about your dataset, fraud patterns, or rule performance. "
+            "The analyst has context about your current dataset and generated rules."
+        )
+
+        user_text = st.text_area(
+            "Your question",
+            placeholder="e.g., Which features are most predictive of fraud in this dataset?",
+        )
+
+        if st.button("Ask", disabled=not (api_key and user_text)):
+            feature_cols = st.session_state["feature_columns"]
+            total_records = len(df)
+            fraud_rate = df[TARGET].mean()
+            fraud_count = int(df[TARGET].sum())
+
+            min_split = st.session_state["min_samples_split"]
+            feature_key = tuple(sorted(feature_cols))
+            current_rules = get_rules(df_hash(df), 4, 30, min_split, feature_key, _df=df)
+            all_rules = current_rules + st.session_state.get("suggested_rules", [])
+
+            system_prompt = build_analyst_system_prompt(
+                feature_cols, total_records, fraud_rate, fraud_count, all_rules
+            )
+
+            with st.spinner("Thinking..."):
+                try:
+                    response = ask_analyst_via_concentrate(
+                        user_text, api_key, system_prompt, model=selected_model
+                    )
+                    st.session_state["last_analyst_response"] = response
+                except Exception as e:
+                    st.error(f"API error: {e}")
+
+        analyst_response = st.session_state.get("last_analyst_response")
+        if analyst_response:
+            st.markdown(analyst_response)

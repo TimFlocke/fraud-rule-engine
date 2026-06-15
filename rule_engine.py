@@ -511,19 +511,78 @@ def build_system_prompt(feature_columns: list[str]) -> str:
     """)
 
 
-def suggest_rule_via_claude(user_text: str, api_key: str, feature_columns: list[str] | None = None) -> str:
-    """Call Claude API to parse a natural-language rule suggestion into a lambda."""
-    import anthropic
+def suggest_rule_via_claude(
+    user_text: str,
+    api_key: str,
+    feature_columns: list[str] | None = None,
+    model: str = "anthropic/claude-sonnet-4-6",
+) -> str:
+    """Call Concentrate API to parse a natural-language rule suggestion into a lambda."""
+    from openai import OpenAI
 
     system = build_system_prompt(feature_columns if feature_columns is not None else FEATURES)
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    client = OpenAI(api_key=api_key, base_url="https://api.concentrate.ai/v1")
+    response = client.chat.completions.create(
+        model=model,
         max_tokens=256,
-        system=system,
-        messages=[{"role": "user", "content": user_text}],
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_text},
+        ],
     )
-    return message.content[0].text.strip()
+    return response.choices[0].message.content.strip()
+
+
+def build_analyst_system_prompt(
+    feature_columns: list[str],
+    total_records: int,
+    fraud_rate: float,
+    fraud_count: int,
+    rules: list[dict] | None = None,
+) -> str:
+    col_list = ", ".join(feature_columns)
+    rules_section = ""
+    if rules:
+        lines = [
+            f"- {r['name']}: {r['rule_str']} "
+            f"(precision={r['precision']:.1%}, recall={r['recall']:.1%})"
+            for r in rules
+        ]
+        rules_section = "\n\nCurrent generated rules:\n" + "\n".join(lines)
+
+    return textwrap.dedent(f"""\
+        You are an expert fraud analyst. You have access to the following dataset:
+        - Total records: {total_records:,}
+        - Fraud rate: {fraud_rate:.2%}
+        - Fraud count: {fraud_count:,}
+        - Available feature columns: {col_list}
+        {rules_section}
+
+        Answer the user's questions about fraud patterns, rule performance, feature importance,
+        and fraud detection strategy based on this specific dataset context.
+        Be concise and practical. When discussing rules, reference them by name if relevant.
+    """)
+
+
+def ask_analyst_via_concentrate(
+    user_text: str,
+    api_key: str,
+    system_prompt: str,
+    model: str = "anthropic/claude-sonnet-4-6",
+) -> str:
+    """Send a conversational question to Concentrate and return the plain-text response."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key, base_url="https://api.concentrate.ai/v1")
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=1024,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ],
+    )
+    return response.choices[0].message.content.strip()
 
 
 def evaluate_suggested_rule(df: pd.DataFrame, lambda_str: str, feature_columns: list[str] | None = None) -> dict | None:
