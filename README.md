@@ -14,7 +14,7 @@ No setup required — just click and explore!
 - **Data Health Dashboard** — row counts, fraud rate, feature distributions, missing value checks, and data quality warnings
 - **Auto-Generated Rules** — decision tree extraction produces human-readable fraud rules with precision, recall, escalation rate, and plain-English narratives
 - **Strategy Builder** — select rules, tune Accept/Refer/Reject thresholds, see real-time impact on fraud catch and customer friction
-- **Claude-Powered Rule Suggestions** — describe a fraud pattern in plain English; Claude generates a rule and the engine evaluates it instantly
+- **AI Analyst** — powered by [Concentrate.ai](https://concentrate.ai). Two modes: describe a fraud pattern in plain English and the engine generates and evaluates a rule instantly, or ask the analyst a question about your dataset, features, or rules and get a conversational response. Switch between Claude, GPT-4o, and Gemini via a model selector.
 
 ## Supported Datasets
 
