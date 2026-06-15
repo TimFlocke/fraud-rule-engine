@@ -28,7 +28,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Page config ──────────────────────────────────────────────────────────────
-st.set_page_config(page_title="ACH Fraud Rule Engine", layout="wide")
+st.set_page_config(page_title="Fraud Rule Engine", layout="wide")
 
 # ── Title ────────────────────────────────────────────────────────────────────
 # st.title("ACH Fraud Rule Engine")
